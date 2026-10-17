@@ -38,15 +38,6 @@ class Database:
 		self.idCnt += 1
 		return user
 
-	def incClick(self, username: str) -> User | None:
-		user = self.users.get(username, None)
-		if user is None: return None
-
-		user.clicks += 1
-		self.users[username] = user
-
-		return user
-
 	def getUserSession(self, sessionToken: str) -> UserSession:
 		return self.sessions.get(sessionToken, None)
 
@@ -107,33 +98,37 @@ async def createUser(user: LoginUser, db = Depends(getDb)):
 	return dbUser.model_dump(exclude={"password"})
 
 
-@app.get("/me")
-async def getMe(session_token: Annotated[str | None, Cookie()] = None, 
-	db = Depends(getDb)):
-	userSession = db.getUserSession(session_token)
-	if userSession is None:
-		raise HTTPException(status_code=404, detail="not logged in")
-
-	user = db.getUser(userSession.username)
-	return user.model_dump(exclude={"password"})
-
-
-@app.get("/click")
-async def getMe(session_token: Annotated[str | None, Cookie()] = None, 
-	db = Depends(getDb)):
-	userSession = db.getUserSession(session_token)
-	if userSession is None:
-		raise HTTPException(status_code=404, detail="not logged in")
-
-	user = db.incClick(userSession.username)
-	return user.model_dump(exclude={"password"})
-
-
 @app.get("/user/{username}")
 async def getUser(username: str, db = Depends(getDb)):
 	dbUser = db.getUser(username)
 	if dbUser is None:
 		raise HTTPException(status_code=404, detail="username not found")
 	return dbUser.model_dump(exclude={"password", "id"})
+
+
+async def getCurrentUser(
+	session_token: Annotated[str | None, Cookie()] = None, 
+	db = Depends(getDb)
+):
+	userSession = db.getUserSession(session_token)
+	if userSession is None:
+		raise HTTPException(status_code=401, detail="not logged in")
+
+	user = db.getUser(userSession.username)
+	if user is None:
+		raise HTTPException(status_code=401, detail="invalid session")
+
+	return user
+
+
+@app.get("/me")
+async def getMe(user: Annotated[User, Depends(getCurrentUser)]):
+	return user.model_dump(exclude={"password"})
+
+
+@app.post("/click")
+async def click(user: Annotated[User, Depends(getCurrentUser)]):
+	user.clicks += 1
+	return user.model_dump(exclude={"password"})
 
 
