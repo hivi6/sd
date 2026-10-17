@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS Users (
 	id INT UNSIGNED NOT NULL AUTO_INCREMENT,
 	username VARCHAR(255) NOT NULL,
 	password VARCHAR(255) NOT NULL,
+	clicks INT UNSIGNED DEFAULT 0,
 
 	PRIMARY KEY (id),
 	UNIQUE KEY uqUsername (username)
@@ -13,17 +14,9 @@ CREATE TABLE IF NOT EXISTS Users (
 
 CREATE TABLE IF NOT EXISTS Sessions (
 	sessionId VARCHAR(32) NOT NULL,
-	userId INT UNSIGNED DEFAULT NULL,
-	expiresAt INT UNSIGNED DEFAULT NULL,
+	username VARCHAR(255) NOT NULL,
 
 	PRIMARY KEY (sessionId),
-	UNIQUE KEY uqUserId (userId),
-	KEY idxExpiresAt (expiresAt),
-
-	CONSTRAINT fkSessionsUserId
-		FOREIGN KEY (userId)
-		REFERENCES Users (id)
-		ON DELETE CASCADE
-		ON UPDATE CASCADE
+	UNIQUE KEY uqUsername (username)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

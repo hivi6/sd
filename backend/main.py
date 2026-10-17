@@ -1,8 +1,18 @@
 from contextlib import asynccontextmanager
+import os
 from pydantic import BaseModel
 from typing import Annotated
+import secrets
 
 from fastapi import FastAPI, Depends, Request, HTTPException, Response, Cookie
+from sqlalchemy import create_engine, text
+
+
+class AppConfig:
+	DB_HOST = os.getenv("DB_HOST", "sd-db")
+	DB_PORT = os.getenv("DB_PORT", "3306")
+	DB_USER = os.getenv("DB_USER", "root")
+	DB_PASS = os.getenv("DB_PASS", "root")
 
 
 class User(BaseModel):
@@ -13,40 +23,114 @@ class User(BaseModel):
 
 
 class UserSession(BaseModel):
+	sessionId: str
 	username: str
-	sessionToken: int
 
 
 class Database:
 	def __init__(self):
+		self.engine_line = (
+			f"mysql+pymysql://"
+			f"{AppConfig.DB_USER}:{AppConfig.DB_PASS}" 
+			f"@{AppConfig.DB_HOST}:{AppConfig.DB_PORT}/Sd"
+		)
+		self.engine = create_engine(self.engine_line)
 		self.users = dict()
 		self.sessions = dict()
 		self.idCnt = 0
 		self.sessionCnt = 0
 
 	def getUser(self, username: str) -> User | None:
-		if username is None:
-			raise ValueError()
-		return self.users.get(username, None)
+		with self.engine.connect() as conn:
+			query = text("""
+				SELECT * FROM Users WHERE username = :username
+			""")
+			res = conn.execute(query,
+				{"username": username})
+			user = res.mappings().first()
+			if user:
+				return User(id=user['id'], 
+					username=user['username'],
+					password=user['password'],
+					clicks=user['clicks']
+				)
+			return None
 
 	def createUser(self, username: str, password: str) -> User | None:
-		if username in self.users:
+		with self.engine.connect() as conn:
+			query = text("""
+				INSERT IGNORE INTO Users (username, password) 
+				VALUES (:username, :password)
+			""")
+			res = conn.execute(query, 
+				{"username": username, "password": password})
+			conn.commit()
+
+			if res.rowcount == 0:
+				return None
+
+			return User(id=res.lastrowid, username=username, 
+				password=password, clicks=0)
+
+	def updateClick(self, username: str, newClick: int):
+		with self.engine.connect() as conn:
+			query = text("""
+				UPDATE Users
+				SET clicks = :newClick
+				WHERE username = :username
+			""")
+			res = conn.execute(query,
+				{"username": username, "newClick": newClick})
+			conn.commit()
+
+	def getUserSessionById(self, sessionId: str = None) -> UserSession | None:
+		with self.engine.connect() as conn:
+			query = text("""
+				SELECT * FROM Sessions
+				WHERE sessionId = :sessionId
+			""")
+			res = conn.execute(query, {"sessionId": sessionId})
+			session = res.mappings().first()
+			if session:
+				return UserSession(
+					sessionId=sessionId,
+					username=session['username']
+				)
 			return None
-		user = User(id=self.idCnt, username=username, 
-			password=password, clicks=0)
-		self.users[username] = user
-		self.idCnt += 1
-		return user
 
-	def getUserSession(self, sessionToken: str) -> UserSession:
-		return self.sessions.get(sessionToken, None)
+	def getUserSessionByUsername(self, username: str = None) -> UserSession | None:
+		with self.engine.connect() as conn:
+			query = text("""
+				SELECT * FROM Sessions
+				WHERE username = :username
+			""")
+			res = conn.execute(query, {"username": username})
+			session = res.mappings().first()
+			if session:
+				return UserSession(
+					sessionId=session['sessionId'],
+					username=session['username']
+				)
+			return None
 
-	def createUserSession(self, username: str) -> UserSession:
-		userSession = UserSession(username=username, 
-			sessionToken=self.sessionCnt)
-		self.sessions[str(self.sessionCnt)] = userSession
-		self.sessionCnt += 1
-		return userSession
+	def createUserSession(self, username: str) -> UserSession | None:
+		with self.engine.connect() as conn:
+			sessionId = secrets.token_hex(16)
+			query = text("""
+				INSERT INTO Sessions
+				VALUES (:sessionId, :username)
+			""")
+			res = conn.execute(query, {"sessionId": sessionId,
+				"username": username})
+			conn.commit()
+
+			if res.rowcount == 0:
+				return None
+
+			return UserSession(
+				sessionId=sessionId,
+				username=username
+			)
 		
 
 @asynccontextmanager
@@ -80,9 +164,11 @@ async def loginUser(response: Response, user: LoginUser, db = Depends(getDb)):
 	if dbUser is None or dbUser.password != user.password:
 		raise HTTPException(status_code=404, detail=errorMsg)
 
-	userSession = db.createUserSession(user.username)
+	userSession = db.getUserSessionByUsername(user.username)
+	if userSession is None:
+		userSession = db.createUserSession(user.username)
 	response.set_cookie(key="session_token", 
-		value=f"{userSession.sessionToken}")
+		value=f"{userSession.sessionId}")
 
 	return dbUser.model_dump(exclude={"password"})
 
@@ -110,7 +196,7 @@ async def getCurrentUser(
 	session_token: Annotated[str | None, Cookie()] = None, 
 	db = Depends(getDb)
 ):
-	userSession = db.getUserSession(session_token)
+	userSession = db.getUserSessionById(session_token)
 	if userSession is None:
 		raise HTTPException(status_code=401, detail="not logged in")
 
@@ -127,8 +213,12 @@ async def getMe(user: Annotated[User, Depends(getCurrentUser)]):
 
 
 @app.post("/click")
-async def click(user: Annotated[User, Depends(getCurrentUser)]):
+async def click(
+	user: Annotated[User, Depends(getCurrentUser)],
+	db = Depends(getDb)
+):
 	user.clicks += 1
+	db.updateClick(user.username, user.clicks)
 	return user.model_dump(exclude={"password"})
 
 
