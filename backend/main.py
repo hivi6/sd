@@ -72,16 +72,18 @@ class Database:
 			return User(id=res.lastrowid, username=username, 
 				password=password, clicks=0)
 
-	def updateClick(self, username: str, newClick: int):
+	def incrementClicks(self, username: str) -> User:
 		with self.engine.connect() as conn:
 			query = text("""
 				UPDATE Users
-				SET clicks = :newClick
+				SET clicks = clicks + 1
 				WHERE username = :username
 			""")
 			res = conn.execute(query,
-				{"username": username, "newClick": newClick})
+				{"username": username})
 			conn.commit()
+
+		return self.getUser(username)
 
 	def getUserSessionById(self, sessionId: str = None) -> UserSession | None:
 		with self.engine.connect() as conn:
@@ -217,8 +219,7 @@ async def click(
 	user: Annotated[User, Depends(getCurrentUser)],
 	db = Depends(getDb)
 ):
-	user.clicks += 1
-	db.updateClick(user.username, user.clicks)
+	user = db.incrementClicks(user.username)
 	return user.model_dump(exclude={"password"})
 
 
