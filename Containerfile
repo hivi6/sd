@@ -1,0 +1,10 @@
+FROM ghcr.io/astral-sh/uv:alpine3.23
+
+WORKDIR /app
+
+COPY main.py pyproject.toml uv.lock .
+
+RUN uv sync --frozen --no-install-project --no-dev
+
+ENTRYPOINT ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
