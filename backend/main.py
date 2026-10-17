@@ -3,6 +3,7 @@ import os
 from pydantic import BaseModel
 from typing import Annotated
 import secrets
+import socket
 
 from fastapi import FastAPI, Depends, Request, HTTPException, Response, Cookie
 from sqlalchemy import create_engine, text
@@ -146,6 +147,13 @@ async def getDb(request: Request) -> Database:
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.middleware("http")
+async def identify_backend(request: Request, call_next):
+	response = await call_next(request)
+	response.headers["X-Backend"] = socket.gethostname()
+	return response
 
 
 @app.get("/ping")
