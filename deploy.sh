@@ -14,6 +14,7 @@ CMD_DB_START=${CMD_DB_START:-0}
 CMD_DB_STOP=${CMD_DB_STOP:-0}
 CMD_DB_LOG=${CMD_DB_LOG:-0}
 CMD_DB_CLI=${CMD_DB_CLI:-0}
+CMD_DB_CREATE=${CMD_DB_CREATE:-0}
 
 webserver_build() {
 	podman build -t $WEBSERVER_IMAGE backend
@@ -47,8 +48,12 @@ db_log() {
 }
 
 db_cli() {
-	podman run -it --rm --net=host $DB_IMAGE mysql \
-		-h 127.0.0.1 -u root -proot
+	podman exec -it $DB_CONTAINER mysql -u root -proot "$@"
+}
+
+db_create() {
+	podman exec -i "$DB_CONTAINER" mysql -u root -proot \
+		< db/schema-0.sql
 }
 
 [ "$CMD_WEBSERVER_BUILD" == 1 ] && webserver_build
@@ -58,5 +63,6 @@ db_cli() {
 [ "$CMD_DB_START" == 1 ] && db_start
 [ "$CMD_DB_STOP" == 1 ] && db_stop
 [ "$CMD_DB_LOG" == 1 ] && db_log
-[ "$CMD_DB_CLI" == 1 ] && db_cli
+[ "$CMD_DB_CLI" == 1 ] && db_cli "$@"
+[ "$CMD_DB_CREATE" == 1 ] && db_create
 
