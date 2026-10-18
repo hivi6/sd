@@ -6,11 +6,12 @@ import secrets
 import socket
 
 from fastapi import FastAPI, Depends, Request, HTTPException, Response, Cookie
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, URL
 
 
 class AppConfig:
-	DB_HOST = os.getenv("DB_HOST", "sd-db")
+	DB_WRITE_HOST = os.getenv("DB_WRITE_HOST", "sd-db-0")
+	DB_READ_HOST = os.getenv("DB_READ_HOST", "sd-db-1")
 	DB_PORT = os.getenv("DB_PORT", "3306")
 	DB_USER = os.getenv("DB_USER", "root")
 	DB_PASS = os.getenv("DB_PASS", "root")
@@ -30,35 +31,53 @@ class UserSession(BaseModel):
 
 class Database:
 	def __init__(self):
-		self.engine_line = (
-			f"mysql+pymysql://"
-			f"{AppConfig.DB_USER}:{AppConfig.DB_PASS}" 
-			f"@{AppConfig.DB_HOST}:{AppConfig.DB_PORT}/Sd"
+		self.read_engine = create_engine(
+			URL.create(
+				"mysql+pymysql",
+				username=AppConfig.DB_USER,
+				password=AppConfig.DB_PASS,
+				host=AppConfig.DB_READ_HOST,
+				port=int(AppConfig.DB_PORT),
+				database="Sd",
+			)
 		)
-		self.engine = create_engine(self.engine_line)
+		self.write_engine = create_engine(
+			URL.create(
+				"mysql+pymysql",
+				username=AppConfig.DB_USER,
+				password=AppConfig.DB_PASS,
+				host=AppConfig.DB_WRITE_HOST,
+				port=int(AppConfig.DB_PORT),
+				database="Sd",
+			)
+		)
 		self.users = dict()
 		self.sessions = dict()
 		self.idCnt = 0
 		self.sessionCnt = 0
 
+	def _getUser(self, conn, username: str) -> User | None:
+		query = text("""
+			SELECT * FROM Users WHERE username = :username
+		""")
+		res = conn.execute(query,
+			{"username": username})
+		user = res.mappings().first()
+		if user:
+			return User(id=user['id'], 
+				username=user['username'],
+				password=user['password'],
+				clicks=user['clicks']
+			)
+		return None
+		
+
 	def getUser(self, username: str) -> User | None:
-		with self.engine.connect() as conn:
-			query = text("""
-				SELECT * FROM Users WHERE username = :username
-			""")
-			res = conn.execute(query,
-				{"username": username})
-			user = res.mappings().first()
-			if user:
-				return User(id=user['id'], 
-					username=user['username'],
-					password=user['password'],
-					clicks=user['clicks']
-				)
-			return None
+		with self.read_engine.connect() as conn:
+			return self._getUser(conn, username)
 
 	def createUser(self, username: str, password: str) -> User | None:
-		with self.engine.connect() as conn:
+		with self.write_engine.connect() as conn:
 			query = text("""
 				INSERT IGNORE INTO Users (username, password) 
 				VALUES (:username, :password)
@@ -74,7 +93,7 @@ class Database:
 				password=password, clicks=0)
 
 	def incrementClicks(self, username: str) -> User:
-		with self.engine.connect() as conn:
+		with self.write_engine.connect() as conn:
 			query = text("""
 				UPDATE Users
 				SET clicks = clicks + 1
@@ -84,10 +103,10 @@ class Database:
 				{"username": username})
 			conn.commit()
 
-		return self.getUser(username)
+			return self._getUser(conn, username)
 
 	def getUserSessionById(self, sessionId: str = None) -> UserSession | None:
-		with self.engine.connect() as conn:
+		with self.read_engine.connect() as conn:
 			query = text("""
 				SELECT * FROM Sessions
 				WHERE sessionId = :sessionId
@@ -102,7 +121,7 @@ class Database:
 			return None
 
 	def getUserSessionByUsername(self, username: str = None) -> UserSession | None:
-		with self.engine.connect() as conn:
+		with self.write_engine.connect() as conn:
 			query = text("""
 				SELECT * FROM Sessions
 				WHERE username = :username
@@ -117,7 +136,7 @@ class Database:
 			return None
 
 	def createUserSession(self, username: str) -> UserSession | None:
-		with self.engine.connect() as conn:
+		with self.write_engine.connect() as conn:
 			sessionId = secrets.token_hex(16)
 			query = text("""
 				INSERT INTO Sessions

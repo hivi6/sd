@@ -70,26 +70,44 @@ webserver() {
 }
 
 db_start() {
-	podman run --net=$PODMAN_NETWORK -d -e MYSQL_ROOT_PASSWORD=root \
-		--name $DB_CONTAINER $DB_IMAGE
+	# server id cannot start with 0
+	podman run --net=$PODMAN_NETWORK -d \
+		-e MYSQL_ROOT_PASSWORD=root \
+		--name $DB_CONTAINER-0 $DB_IMAGE \
+			--server-id=1 \
+			--gtid-mode=ON \
+			--enforce-gtid-consistency=ON
+
+	podman run --net=$PODMAN_NETWORK -d \
+		-e MYSQL_ROOT_PASSWORD=root \
+		--name $DB_CONTAINER-1 $DB_IMAGE \
+			--server-id=2 \
+			--gtid-mode=ON \
+			--enforce-gtid-consistency=ON
 }
 
 db_stop() {
-	podman stop $DB_CONTAINER
-	podman rm $DB_CONTAINER
+	podman stop $DB_CONTAINER-{0..1}
+	podman rm $DB_CONTAINER-{0..1}
 }
 
 db_log() {
-	podman logs -f $DB_CONTAINER
+	podman logs -f $DB_CONTAINER-0
 }
 
 db_cli() {
-	podman exec -it $DB_CONTAINER \
+	podman exec -it $DB_CONTAINER-0 \
 		mysql -u root -proot "$@"
 }
 
 db_create() {
-	podman exec -i "$DB_CONTAINER" mysql -u root -proot \
+	podman exec -i "$DB_CONTAINER-0" mysql -u root -proot \
+		< db/replication-master.sql
+
+	podman exec -i "$DB_CONTAINER-1" mysql -u root -proot \
+		< db/replication-slave.sql
+
+	podman exec -i "$DB_CONTAINER-0" mysql -u root -proot \
 		< db/schema-0.sql
 }
 
