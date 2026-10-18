@@ -22,3 +22,15 @@ To deploy load balancer, run the following in another terminal:
 CMD_LB=1 bash deploy.sh
 ```
 
+## Current configuration
+
+Webserver configuration:
+- 2 webserver
+
+Database configuration:
+- 1 write database
+- 1 read database
+
+Loadbalancer configuration:
+- 1 load balancer connected to 2 webserver
+
